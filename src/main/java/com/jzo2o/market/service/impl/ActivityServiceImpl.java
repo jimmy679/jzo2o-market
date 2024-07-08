@@ -3,7 +3,6 @@ package com.jzo2o.market.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.jzo2o.common.expcetions.BadRequestException;
 import com.jzo2o.common.model.PageResult;
 import com.jzo2o.common.utils.*;
 import com.jzo2o.market.constants.TabTypeConstants;
@@ -18,7 +17,6 @@ import com.jzo2o.market.service.IActivityService;
 import com.jzo2o.market.service.ICouponService;
 import com.jzo2o.market.service.ICouponWriteOffService;
 import com.jzo2o.mysql.utils.PageUtils;
-import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -153,4 +151,77 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
 
     }
 
+    @Override
+    public void preHeat() {
+        //当前时间
+        LocalDateTime now = DateUtils.now();
+
+        //查询进行中还未到结束的优惠券活动， 1个月内待开始的优惠券活动
+        /**
+         select *
+         from activity t
+         where t.distribute_start_time < date_add(now(), INTERVAL 30 day))  and t.status in(1,2)
+         order by t.distribute_start_time
+         */
+        List<Activity> list = lambdaQuery()
+                .le(Activity::getDistributeStartTime, now.plusDays(30))//1个月内即将开始的
+                .in(Activity::getStatus, Arrays.asList(NO_DISTRIBUTE.getStatus(), DISTRIBUTING.getStatus()))//查询待开始和进行中的
+                .orderByAsc(Activity::getDistributeStartTime)
+                .list();
+        if (CollUtils.isEmpty(list)) {
+            //防止缓存穿透
+            list = new ArrayList<>();
+        }
+        // 2.数据转换
+        List<SeizeCouponInfoResDTO> seizeCouponInfoResDTOS = BeanUtils.copyToList(list, SeizeCouponInfoResDTO.class);
+        String seizeCouponInfoStr = JsonUtils.toJsonStr(seizeCouponInfoResDTOS);
+
+        // 3.活动列表写入缓存
+        redisTemplate.opsForValue().set(ACTIVITY_CACHE_LIST, seizeCouponInfoStr);
+
+
+    }
+
+    @Override
+    public List<SeizeCouponInfoResDTO> queryForListFromCache(Integer tabType) {
+        //从redis查询活动信息
+        Object seizeCouponInfoStr = redisTemplate.opsForValue().get(ACTIVITY_CACHE_LIST);
+        if (ObjectUtils.isNull(seizeCouponInfoStr)) {
+            return CollUtils.emptyList();
+        }
+        //将json转为List
+        List<SeizeCouponInfoResDTO> seizeCouponInfoResDTOS = JsonUtils.toList(seizeCouponInfoStr.toString(), SeizeCouponInfoResDTO.class);
+        //根据tabType确定要查询的状态(转换:前端传2-数据库为1)
+        int queryStatus = tabType == TabTypeConstants.SEIZING ? DISTRIBUTING.getStatus() : NO_DISTRIBUTE.getStatus();
+        //过滤数据，并设置剩余数量、实际状态
+        List<SeizeCouponInfoResDTO> collect = seizeCouponInfoResDTOS.stream().filter(item -> queryStatus == getStatus(item.getDistributeStartTime(), item.getDistributeEndTime(), item.getStatus()))
+                //peek可以实现是过程方法，每个元素都执行
+                .peek(item -> {
+                    //剩余数量--与前端字段匹配
+                    item.setRemainNum(item.getStockNum());
+                    //状态
+                    item.setStatus(queryStatus);
+                }).collect(Collectors.toList());
+        return collect;
+    }
+
+    /**
+     * 获取状态，
+     * 用于xxl或其他定时任务在高性能要求下无法做到实时状态
+     * @return
+     */
+    private int getStatus(LocalDateTime distributeStartTime, LocalDateTime distributeEndTime, Integer status) {
+        if (NO_DISTRIBUTE.equals(status) &&
+                distributeStartTime.isBefore(DateUtils.now()) &&
+                distributeEndTime.isAfter(DateUtils.now())) {//待生效状态，实际活动已开始--已开始
+            return DISTRIBUTING.getStatus();
+        }else if(NO_DISTRIBUTE.equals(status) &&
+                distributeEndTime.isBefore(DateUtils.now())){//待生效状态，实际活动已结束--已结束
+            return LOSE_EFFICACY.getStatus();
+        }else if (DISTRIBUTING.equals(status) &&
+                distributeEndTime.isBefore(DateUtils.now())) {//进行中状态，实际活动已结束--已结束
+            return LOSE_EFFICACY.getStatus();
+        }
+        return status;
+    }
 }

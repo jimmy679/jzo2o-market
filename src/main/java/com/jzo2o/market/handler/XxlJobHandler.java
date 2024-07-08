@@ -34,7 +34,7 @@ public class XxlJobHandler {
      * 每分钟执行一次
      */
     @XxlJob("updateActivityStatus")
-    public void updateActivitySatus(){
+    public void updateActivityStatus(){
         log.info("定时修改活动状态...");
         try {
             activityService.updateStatus();
@@ -57,5 +57,18 @@ public class XxlJobHandler {
         }
     }
 
+    /**
+     * 活动预热，整点预热
+     *
+     */
+    @XxlJob("activityPreHeat")
+    public void activityPreHeat() {
+        log.info("优惠券活动定时预热...");
+        try {
+            activityService.preHeat();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
 
 }

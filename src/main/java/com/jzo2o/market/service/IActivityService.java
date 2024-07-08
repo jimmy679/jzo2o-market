@@ -52,4 +52,11 @@ public interface IActivityService extends IService<Activity> {
      * 2.活动中产生的未使用的优惠券作废
      */
     void revoke(Long id);
+
+    /**
+     * 活动预热
+     */
+    void preHeat();
+
+    List<SeizeCouponInfoResDTO> queryForListFromCache(Integer tabType);
 }
