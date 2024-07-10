@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.jzo2o.common.model.PageResult;
 import com.jzo2o.common.utils.*;
+import com.jzo2o.market.constants.RedisConstants;
 import com.jzo2o.market.constants.TabTypeConstants;
 import com.jzo2o.market.enums.ActivityStatusEnum;
 import com.jzo2o.market.mapper.ActivityMapper;
@@ -179,7 +180,19 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         // 3.活动列表写入缓存
         redisTemplate.opsForValue().set(ACTIVITY_CACHE_LIST, seizeCouponInfoStr);
 
+        //将库存写入
+        //此时分两种情况：1.活动未开始，直接将MySQL数据写到redis
+        list.stream().filter(v->getStatus(v.getDistributeStartTime(),v.getDistributeEndTime(),v.getStatus()) == NO_DISTRIBUTE.getStatus()).forEach(v->{
+            //获取key
+            String key = String.format(COUPON_RESOURCE_STOCK,v.getId()%10);
+            redisTemplate.opsForHash().put(key,v.getId(),v.getTotalNum());
+        });
 
+        //2.活动已开始，使用putifabsent命令对定时任务兜底
+        list.stream().filter(v->getStatus(v.getDistributeStartTime(),v.getDistributeEndTime(),v.getStatus()) == DISTRIBUTING.getStatus()).forEach(v->{
+            String key = String.format(COUPON_RESOURCE_STOCK,v.getId()%10);
+            redisTemplate.opsForHash().putIfAbsent(key,v.getId(),v.getStockNum());
+        });
     }
 
     @Override
