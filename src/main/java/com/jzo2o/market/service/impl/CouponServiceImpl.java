@@ -1,24 +1,16 @@
 package com.jzo2o.market.service.impl;
 
-import cn.hutool.db.DbRuntimeException;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.jzo2o.api.market.dto.request.CouponUseBackReqDTO;
-import com.jzo2o.api.market.dto.request.CouponUseReqDTO;
-import com.jzo2o.api.market.dto.response.AvailableCouponsResDTO;
-import com.jzo2o.api.market.dto.response.CouponUseResDTO;
 import com.jzo2o.common.expcetions.BadRequestException;
 import com.jzo2o.common.expcetions.CommonException;
-import com.jzo2o.common.expcetions.DBException;
 import com.jzo2o.common.model.PageResult;
 import com.jzo2o.common.utils.*;
-import com.jzo2o.market.enums.ActivityStatusEnum;
 import com.jzo2o.market.enums.CouponStatusEnum;
 import com.jzo2o.market.mapper.CouponMapper;
-import com.jzo2o.market.model.domain.Activity;
 import com.jzo2o.market.model.domain.Coupon;
-import com.jzo2o.market.model.domain.CouponWriteOff;
 import com.jzo2o.market.model.dto.request.CouponOperationPageQueryReqDTO;
 import com.jzo2o.market.model.dto.request.SeizeCouponReqDTO;
 import com.jzo2o.market.model.dto.response.ActivityInfoResDTO;
@@ -27,7 +19,6 @@ import com.jzo2o.market.service.IActivityService;
 import com.jzo2o.market.service.ICouponService;
 import com.jzo2o.market.service.ICouponUseBackService;
 import com.jzo2o.market.service.ICouponWriteOffService;
-import com.jzo2o.market.utils.CouponUtils;
 import com.jzo2o.mvc.utils.UserContext;
 import com.jzo2o.mysql.utils.PageUtils;
 import com.jzo2o.redis.utils.RedisSyncQueueUtils;
@@ -38,11 +29,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -156,4 +145,51 @@ public class CouponServiceImpl extends ServiceImpl<CouponMapper, Coupon> impleme
                 .le(Coupon::getValidityTime, DateUtils.now())
                 .update();
     }
+
+    @Override
+    public void seizeCoupon(SeizeCouponReqDTO seizeCouponReqDTO) {
+        //校验活动有效性
+        //在redis中是否能查到
+        ActivityInfoResDTO activity = activityService.getActivityInfoByIdFromCache(seizeCouponReqDTO.getId());
+        LocalDateTime now = DateUtils.now();
+        if (activity == null || activity.getDistributeStartTime().isAfter(now)) {
+            throw new CommonException(SEIZE_COUPON_FAILD, "活动未开始");
+        }
+        if (activity.getDistributeEndTime().isBefore(now)) {
+            throw new CommonException(SEIZE_COUPON_FAILD, "活动已结束");
+        }
+        // 2.抢券准备
+//         key: 抢券同步队列，资源库存,抢券列表
+//         argv：抢券id,用户id
+        int index = (int) (seizeCouponReqDTO.getId() % 10);
+        // 同步队列redisKey
+        String couponSeizeSyncRedisKey = RedisSyncQueueUtils.getQueueRedisKey(COUPON_SEIZE_SYNC_QUEUE_NAME, index);
+        // 资源库存redisKey
+        String resourceStockRedisKey = String.format(COUPON_RESOURCE_STOCK, index);
+        // 抢券列表
+        String couponSeizeListRedisKey = String.format(COUPON_SEIZE_LIST, activity.getId(), index);
+
+        log.debug("seize coupon keys -> couponSeizeListRedisKey->{},resourceStockRedisKey->{},couponSeizeListRedisKey->{},seizeCouponReqDTO.getId()->{},UserContext.currentUserId():{}",
+                couponSeizeListRedisKey, resourceStockRedisKey, couponSeizeListRedisKey, seizeCouponReqDTO.getId(), UserContext.currentUserId());
+        // 3.抢券结果
+        Object execute = redisTemplate.execute(seizeCouponScript, Arrays.asList(couponSeizeSyncRedisKey, resourceStockRedisKey, couponSeizeListRedisKey),
+                seizeCouponReqDTO.getId(), UserContext.currentUserId());
+        log.debug("seize coupon result : {}", execute);
+        // 4.处理lua脚本结果
+        if (execute == null) {
+            throw new CommonException(SEIZE_COUPON_FAILD, "抢券失败");
+        }
+        long result = NumberUtils.parseLong(execute.toString());
+        if (result > 0) {
+            return;
+        }
+        if (result == -1) {
+            throw new CommonException(SEIZE_COUPON_FAILD, "限领一张");
+        }
+        if (result == -2 || result == -4) {
+            throw new CommonException(SEIZE_COUPON_FAILD, "已抢光!");
+        }
+        throw new CommonException(SEIZE_COUPON_FAILD, "抢券失败");
+    }
+
 }

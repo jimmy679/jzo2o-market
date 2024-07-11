@@ -3,6 +3,7 @@ package com.jzo2o.market.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.jzo2o.common.expcetions.CommonException;
 import com.jzo2o.common.model.PageResult;
 import com.jzo2o.common.utils.*;
 import com.jzo2o.market.constants.RedisConstants;
@@ -27,6 +28,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 import static com.jzo2o.market.constants.RedisConstants.RedisKey.*;
@@ -123,7 +125,7 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
         // 1.更新已经进行中的状态
         lambdaUpdate()
                 .set(Activity::getStatus, ActivityStatusEnum.DISTRIBUTING.getStatus())//更新活动状态为进行中
-                .eq(Activity::getStatus, NO_DISTRIBUTE)//检索待生效的活动
+                .eq(Activity::getStatus, NO_DISTRIBUTE.getStatus())//检索待生效的活动
                 .le(Activity::getDistributeStartTime, now)//活动开始时间小于等于当前时间
                 .gt(Activity::getDistributeEndTime,now)//活动结束时间大于当前时间
                 .update();
@@ -216,6 +218,40 @@ public class ActivityServiceImpl extends ServiceImpl<ActivityMapper, Activity> i
                     item.setStatus(queryStatus);
                 }).collect(Collectors.toList());
         return collect;
+    }
+
+    @Override
+    public ActivityInfoResDTO getActivityInfoByIdFromCache(Long id) {
+        // 1.从缓存中获取活动信息
+        Object activityList = redisTemplate.opsForValue().get(ACTIVITY_CACHE_LIST);
+        if (ObjectUtils.isNull(activityList)) {
+            return null;
+        }
+        // 2.过滤指定活动信息
+        List<ActivityInfoResDTO> list = JsonUtils.toList(activityList.toString(), ActivityInfoResDTO.class);
+        if (CollUtils.isEmpty(list)) {
+            return null;
+        }
+        // 3.过滤指定活动
+        return list.stream()
+                .filter(activityInfoResDTO -> activityInfoResDTO.getId().equals(id))
+                .findFirst().orElse(null);
+    }
+
+    /**
+     * 扣减库存
+     * @param id 活动id
+     *  如果扣减库存失败抛出异常
+     */
+    public void deductStock(Long id){
+        boolean update = lambdaUpdate()
+                .setSql("stock_num = stock_num-1")
+                .eq(Activity::getId, id)
+                .gt(Activity::getStockNum, 0)
+                .update();
+        if(!update){
+            throw new CommonException("扣减优惠券库存失败，活动id:"+id);
+        }
     }
 
     /**

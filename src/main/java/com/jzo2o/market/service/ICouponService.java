@@ -9,6 +9,7 @@ import com.jzo2o.market.model.domain.Coupon;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.jzo2o.market.model.dto.request.CouponOperationPageQueryReqDTO;
 import com.jzo2o.market.model.dto.request.SeizeCouponReqDTO;
+import com.jzo2o.market.model.dto.response.ActivityInfoResDTO;
 import com.jzo2o.market.model.dto.response.CouponInfoResDTO;
 
 import java.math.BigDecimal;
@@ -61,4 +62,12 @@ public interface ICouponService extends IService<Coupon> {
      * 过期优惠券处理
      */
     void processExpireCoupon();
+
+
+    /**
+     * 抢卷流程
+     * @param seizeCouponReqDTO
+     */
+    void seizeCoupon(SeizeCouponReqDTO seizeCouponReqDTO);
+
 }
