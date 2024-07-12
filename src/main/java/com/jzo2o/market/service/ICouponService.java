@@ -11,6 +11,7 @@ import com.jzo2o.market.model.dto.request.CouponOperationPageQueryReqDTO;
 import com.jzo2o.market.model.dto.request.SeizeCouponReqDTO;
 import com.jzo2o.market.model.dto.response.ActivityInfoResDTO;
 import com.jzo2o.market.model.dto.response.CouponInfoResDTO;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -69,5 +70,13 @@ public interface ICouponService extends IService<Coupon> {
      * @param seizeCouponReqDTO
      */
     void seizeCoupon(SeizeCouponReqDTO seizeCouponReqDTO);
+
+    List<AvailableCouponsResDTO> getAvailable(BigDecimal totalAmount);
+
+    /**
+     * 使用优惠券
+     * @param couponUseReqDTO
+     */
+    CouponUseResDTO use(CouponUseReqDTO couponUseReqDTO);
 
 }
